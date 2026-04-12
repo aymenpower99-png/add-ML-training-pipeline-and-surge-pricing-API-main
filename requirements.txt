@@ -1,0 +1,73 @@
+# Core
+numpy
+pandas
+
+# Machine Learning
+scikit-learn
+xgboost
+joblib
+
+# API + requests
+requests
+requests-cache
+retry-requests
+
+# Data processing
+python-dateutil
+
+# Optional (visualisation/debug)
+matplotlib
+seaborn
+
+# Fast API (إذا تستعمل backend)
+fastapi
+uvicorn
+
+# Utils
+tqdm
+
+
+
+
+python -m uvicorn main:app --reload --port 8000
+
+
+
+
+
+
+
+// pricing.service.ts
+import { Injectable } from '@nestjs/common';
+import axios from 'axios';
+
+@Injectable()
+export class PricingService {
+
+  async getPrice(tripData: any) {
+    const response = await axios.post(
+      'http://localhost:8000/predict-price',
+      tripData
+    );
+
+    return response.data;
+  }
+}*
+
+
+
+
+
+// ride.controller.ts
+import { Controller, Post, Body } from '@nestjs/common';
+import { PricingService } from './pricing.service';
+
+@Controller('ride')
+export class RideController {
+
+  constructor(private pricingService: PricingService) {}
+
+  @Post('price')
+  async getPrice(@Body() tripData: any) {
+    return this.pricingService.getPrice(tripData);
+  }
