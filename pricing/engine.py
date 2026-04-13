@@ -210,8 +210,44 @@ def compute_price_ml(
     special   = str(row.get("special_event", "none"))
     m_special = MULT_SPECIAL_EVENT.get(special, 1.0)
 
-    surge_total = round(ml_surge * m_car * m_special, 4)
-    final       = round(raw * surge_total, 2)
+    # ── Multiplicateurs métier obligatoires (non capturés par le ML) ──
+    m_night   = MULT_NIGHT if row.get("is_night") else 1.0
+    m_zone    = MULT_ZONE.get(str(row.get("zone_type", "intérieure")), 1.0)
+    m_friday  = MULT_FRIDAY_JUMUAH if row.get("is_friday_slot") else 1.0
+
+    ram_key = "none"
+    if row.get("is_ramadan_slot"):
+        p = str(row.get("periode", "")).lower()
+        if   "iftar"  in p: ram_key = "ramadan_iftar"
+        elif "taraw"  in p: ram_key = "ramadan_tarawih"
+        elif "suhoor" in p: ram_key = "ramadan_suhoor"
+        else:               ram_key = "ramadan_iftar"
+    elif row.get("is_ramadan_last_week"):
+        ram_key = "ramadan_last_week"
+    m_ramadan = MULT_RAMADAN.get(ram_key, 1.0)
+
+    beach_key = (
+        str(row.get("beach_peak_reason", "none"))
+        if row.get("is_beach_hour") else "none"
+    )
+    m_beach = MULT_BEACH.get(beach_key, 1.0)
+
+    # ── Fusion ML × règles métier ──────────────────────────────────
+    # ML gère : trafic, météo, demande (il les a vus en training)
+    # Règles forcées : nuit, zone, vendredi, ramadan, beach, car, special
+    surge_total = round(
+        ml_surge
+        * m_night
+        * m_zone
+        * m_friday
+        * m_ramadan
+        * m_beach
+        * m_car
+        * m_special,
+        4,
+    )
+
+    final = round(raw * surge_total, 2)
     min_applied = False
     if final < MIN_FARE:
         final, min_applied = MIN_FARE, True
@@ -220,13 +256,21 @@ def compute_price_ml(
     rules.surge_multiplier  = surge_total
     rules.final_price       = final
     rules.min_applied       = min_applied
+    rules.mult_night        = m_night
+    rules.mult_zone         = m_zone
+    rules.mult_friday       = m_friday
+    rules.mult_ramadan      = m_ramadan
+    rules.mult_beach        = m_beach
     rules.ml_used           = True
-    rules.source            = (
-        f"ML ensemble (XGB×0.55 + LGBM×0.45)  "
-        f"surge_raw={ml_surge:.4f}  car=×{m_car}  special=×{m_special} ({special})"
+    rules.source = (
+        f"ML ensemble (XGB×0.55 + LGBM×0.45) × règles métier  "
+        f"surge_ml={ml_surge:.4f}  night=×{m_night}  zone=×{m_zone}  "
+        f"car=×{m_car}  special=×{m_special} ({special})"
     )
     rules.labels["ml"] = (
-        f"surge_ml={ml_surge:.4f} × car={m_car} × special={m_special}"
+        f"surge_ml={ml_surge:.4f} × night={m_night} × zone={m_zone} "
+        f"× friday={m_friday} × ramadan={m_ramadan} × beach={m_beach} "
+        f"× car={m_car} × special={m_special}"
     )
     return rules
 

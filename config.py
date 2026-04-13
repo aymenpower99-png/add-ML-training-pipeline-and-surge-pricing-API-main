@@ -32,7 +32,7 @@ MULT_DEMAND: dict[str, float] = {
     "surge":  1.60,
 }
 
-MULT_NIGHT: float = 1.20
+MULT_NIGHT: float = 2.20
 
 MULT_CAR: dict[str, float] = {
     "economy":     0.75,
@@ -40,7 +40,7 @@ MULT_CAR: dict[str, float] = {
     "comfort":     1.00,
     "first_class": 1.60,
     "van":         1.30,
-    "mini_bus":    1.50,
+    "mini_bus":    1.50,    
 }
 
 MULT_FRIDAY_JUMUAH: float = 1.40
