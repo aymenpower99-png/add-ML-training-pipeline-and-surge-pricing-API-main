@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from typing   import Optional
 
@@ -189,12 +190,13 @@ class PriceResponse(BaseModel):
     surge_multiplier: float
     final_price:      float
     final_price_exact: float
+    loyalty_points:   int
     currency:         str
     min_applied:      bool
 
     # Trajet
     distance_km:  float
-    duration_min: float
+    duration_min: int
     car_type:     str
     car_type_label: str
     zone_type:    str
@@ -244,12 +246,13 @@ def _to_response(r: dict) -> PriceResponse:
         duration_cost    = r["duration_cost"],
         raw_price        = r["raw_price"],
         surge_multiplier = r["surge_multiplier"],
-        final_price      = r["final_price"],
-        final_price_exact = r.get("final_price_exact", r["final_price"]),
+        final_price       = r["final_price_rounded"],
+        final_price_exact = r["final_price"],
+        loyalty_points   = r.get("loyalty_points", 0),
         currency         = r["currency"],
         min_applied      = r["min_applied"],
         distance_km      = r["distance_km"],
-        duration_min     = r["duration_min"],
+        duration_min     = math.ceil(r["duration_min"]),
         car_type         = r["car_type"],
         car_type_label   = r.get("car_type_label", r["car_type"]),
         zone_type        = r["zone_type"],
