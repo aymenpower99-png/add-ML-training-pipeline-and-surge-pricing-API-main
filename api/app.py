@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing   import Optional
 
 # ── Force UTF-8 stdout/stderr (Windows console fix for emoji prints) ─────
@@ -43,6 +43,52 @@ from pricing.engine   import (
     calculate_trip_prices_batch,
     CarType,
 )
+
+
+# ══════════════════════════════════════════════════════════════════
+# DATETIME NORMALIZATION
+# ══════════════════════════════════════════════════════════════════
+
+def _normalize_datetime(dt: datetime | None) -> datetime:
+    """
+    Normalise tous les datetime en timezone-naive UTC.
+
+    - Si dt est None → datetime.now() timezone-naive
+    - Si dt est timezone-aware → convertit en UTC puis supprime tzinfo
+    - Si dt est timezone-naive → garde tel quel
+
+    Cela évite les erreurs "Cannot subtract tz-naive and tz-aware"
+    dans weather.py et garantit une cohérence dans tout le pipeline.
+    """
+    if dt is None:
+        return datetime.now()
+
+    # Si timezone-aware, convertir en UTC puis supprimer tzinfo
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+    return dt
+
+
+def _sanitize_json_response(data: dict) -> dict:
+    """
+    Remplace les valeurs NaN/inf par None pour éviter les erreurs JSON.
+    Utilisé pour les réponses ML qui peuvent contenir NaN (ex: ml_surge_xgb).
+    """
+    import math
+
+    def clean(obj):
+        if isinstance(obj, float):
+            if math.isnan(obj) or math.isinf(obj):
+                return None
+            return obj
+        elif isinstance(obj, dict):
+            return {k: clean(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [clean(item) for item in obj]
+        return obj
+
+    return clean(data)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -386,10 +432,8 @@ def price_estimate(req: PriceEstimateRequest):
     - ML ensemble XGB+LGBM (ou règles métier si ML désactivé)
     """
     try:
-        booking_dt = (
-            datetime.fromisoformat(req.booking_dt)
-            if req.booking_dt else datetime.now()
-        )
+        raw_dt = datetime.fromisoformat(req.booking_dt) if req.booking_dt else None
+        booking_dt = _normalize_datetime(raw_dt)
     except ValueError:
         raise HTTPException(
             status_code=422,
@@ -419,7 +463,7 @@ def price_estimate(req: PriceEstimateRequest):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
-    return _to_response(result)
+    return _sanitize_json_response(_to_response(result))
 
 
 @app.post("/price/quick", response_model=PriceResponse, tags=["Tarification"])
@@ -432,10 +476,8 @@ def price_quick(req: QuickPriceRequest):
     - Heure/date : maintenant (ou booking_dt si fourni)
     """
     try:
-        booking_dt = (
-            datetime.fromisoformat(req.booking_dt)
-            if req.booking_dt else datetime.now()
-        )
+        raw_dt = datetime.fromisoformat(req.booking_dt) if req.booking_dt else None
+        booking_dt = _normalize_datetime(raw_dt)
     except ValueError:
         raise HTTPException(
             status_code=422,
@@ -455,7 +497,7 @@ def price_quick(req: QuickPriceRequest):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
-    return _to_response(result)
+    return _sanitize_json_response(_to_response(result))
 
 
 @app.post("/price/batch", tags=["Tarification"])
@@ -488,10 +530,8 @@ def price_batch(req: BatchPriceRequest):
     }
     """
     try:
-        booking_dt = (
-            datetime.fromisoformat(req.booking_dt)
-            if req.booking_dt else datetime.now()
-        )
+        raw_dt = datetime.fromisoformat(req.booking_dt) if req.booking_dt else None
+        booking_dt = _normalize_datetime(raw_dt)
     except ValueError:
         raise HTTPException(
             status_code=422,
@@ -515,4 +555,5 @@ def price_batch(req: BatchPriceRequest):
     common = result["common"]
     common["duration_min"] = math.ceil(common["duration_min"])
 
-    return result
+    # Sanitize NaN/inf values for JSON serialization
+    return _sanitize_json_response(result)

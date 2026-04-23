@@ -154,9 +154,14 @@ def _is_date_out_of_api_range(target_dt: datetime) -> bool:
     """
     Retourne True si target_dt est hors de la plage couverte par
     Open-Meteo (archive ou forecast).
+
+    Gère les timezone-aware vs timezone-naive datetimes en normalisant
+    les deux en timezone-naive pour la comparaison.
     """
-    now        = pd.Timestamp.now()
-    target_ts  = pd.Timestamp(target_dt)
+    # Normaliser en timezone-naive pour éviter l'erreur de soustraction
+    now = pd.Timestamp.now().tz_localize(None)
+    target_ts = pd.Timestamp(target_dt).tz_localize(None)
+
     days_ahead = (target_ts - now).days
 
     # Trop loin dans le futur
