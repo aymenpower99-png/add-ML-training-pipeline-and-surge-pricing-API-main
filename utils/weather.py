@@ -175,6 +175,25 @@ def _is_date_out_of_api_range(target_dt: datetime) -> bool:
 # APPEL OPEN-METEO
 # ══════════════════════════════════════════════════════════════════
 
+def _safe_estimated_weather(target_dt: datetime) -> dict:
+    """
+    Wrapper défensif autour de _estimated_weather_for_dt.
+    Ne lève JAMAIS d'exception — retourne _DEFAULT_WEATHER en dernier recours.
+    """
+    try:
+        return _estimated_weather_for_dt(target_dt)
+    except Exception as exc:
+        print(
+            f"  ⚠️  Estimation saisonnière échouée ({exc}) → "
+            f"valeurs par défaut génériques"
+        )
+        try:
+            h = target_dt.hour
+        except Exception:
+            h = 12
+        return {**_DEFAULT_WEATHER, "is_night": int(h < 6 or h >= 20)}
+
+
 def fetch_weather(
     lat:       float,
     lon:       float,
@@ -183,10 +202,10 @@ def fetch_weather(
     """
     Récupère la météo réelle pour (lat, lon) à l'heure de target_dt.
 
-    NOUVEAU : Si la date est trop lointaine (> 16 jours dans le futur
-    ou > 80 ans dans le passé), retourne une météo estimée à partir
-    de la saison (moyennes climatiques Tunisie) au lieu de lever une
-    erreur ou de retourner des valeurs par défaut non contextuelles.
+    GARANTIE : Cette fonction ne lève JAMAIS d'exception. Toute erreur
+    (API down, date hors plage, bibliothèque openmeteo défaillante…)
+    est absorbée et retourne une météo estimée par saison, ou en dernier
+    recours, les valeurs par défaut génériques.
 
     Choisit automatiquement :
       • API archive  si target_dt > 3 jours dans le passé
@@ -207,17 +226,27 @@ def fetch_weather(
         is_night          int    0/1
         weather_estimated bool   True si valeurs estimées (pas API)
     """
-    h        = target_dt.hour
-    date_str = target_dt.strftime("%Y-%m-%d")
-    default  = {**_DEFAULT_WEATHER, "is_night": int(h < 6 or h >= 20)}
+    # ── Garde-fou global : rien ne doit remonter au caller ────────
+    try:
+        h        = target_dt.hour
+        date_str = target_dt.strftime("%Y-%m-%d")
+    except Exception as exc:
+        print(f"  ⚠️  target_dt invalide ({exc}) → météo par défaut")
+        return {**_DEFAULT_WEATHER, "is_night": 0}
 
     # ── Vérification plage API ────────────────────────────────────
-    if _is_date_out_of_api_range(target_dt):
+    try:
+        out_of_range = _is_date_out_of_api_range(target_dt)
+    except Exception as exc:
+        print(f"  ⚠️  Vérification plage API échouée ({exc}) → estimation saison")
+        return _safe_estimated_weather(target_dt)
+
+    if out_of_range:
         print(
             f"  ⚠️  Date {date_str} hors plage API Open-Meteo "
             f"(>16 jours futur ou trop ancien) → météo estimée par saison"
         )
-        return _estimated_weather_for_dt(target_dt)
+        return _safe_estimated_weather(target_dt)
 
     try:
         params = {
@@ -288,11 +317,14 @@ def fetch_weather(
             "weather_estimated": False,
         }
 
-    except Exception as exc:
+    except BaseException as exc:
+        # BaseException pour attraper aussi les erreurs remontées par
+        # les bibliothèques openmeteo_requests / retry_requests / flatbuffers
+        # qui parfois héritent directement de BaseException.
         print(
             f"  ⚠️  Open-Meteo ({lat:.4f}, {lon:.4f}) @ {date_str} "
-            f"→ météo estimée par saison. Erreur : {exc}"
+            f"→ météo estimée par saison. Erreur : {type(exc).__name__}: {exc}"
         )
         # En cas d'erreur API, on utilise l'estimation saisonnière
         # plutôt que les valeurs par défaut génériques
-        return _estimated_weather_for_dt(target_dt)
+        return _safe_estimated_weather(target_dt)

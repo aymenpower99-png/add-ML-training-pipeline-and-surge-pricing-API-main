@@ -18,20 +18,31 @@
 from __future__ import annotations
 
 import math
+import sys
 from datetime import datetime
 from typing   import Optional
+
+# ── Force UTF-8 stdout/stderr (Windows console fix for emoji prints) ─────
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 from fastapi              import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic             import BaseModel, Field, field_validator
 
-import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config           import MULT_CAR, MULT_ZONE, MULT_SPECIAL_EVENT
 from models.predictor import predictor
-from pricing.engine   import calculate_trip_price, CarType
+from pricing.engine   import (
+    calculate_trip_price,
+    calculate_trip_prices_batch,
+    CarType,
+)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -142,6 +153,32 @@ class QuickPriceRequest(BaseModel):
     lon_dest:   float = Field(..., example=10.6370)
     car_type:   str   = Field(default="comfort", example="comfort")
     booking_dt: Optional[str] = Field(default=None)
+
+
+class BatchPriceRequest(BaseModel):
+    """
+    Corps pour POST /price/batch — calcul prix multi-véhicules.
+
+    Permet de récupérer les prix de plusieurs classes de véhicules
+    en un seul appel (optimisé : OSRM + météo + geo-lookup exécutés 1 fois).
+    """
+    lat_origin: float = Field(..., example=36.8002)
+    lon_origin: float = Field(..., example=10.1858)
+    lat_dest:   float = Field(..., example=36.4513)
+    lon_dest:   float = Field(..., example=10.7356)
+    car_types:  list[str] = Field(
+        default=["economy", "standard", "comfort", "first_class", "van", "mini_bus"],
+        description="Liste des types de véhicules à calculer",
+        example=["economy", "comfort", "first_class", "van"],
+    )
+    booking_dt: Optional[str] = Field(default=None)
+
+    @field_validator("car_types")
+    @classmethod
+    def validate_car_types(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("car_types ne peut pas être vide")
+        return v
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -419,3 +456,63 @@ def price_quick(req: QuickPriceRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
     return _to_response(result)
+
+
+@app.post("/price/batch", tags=["Tarification"])
+def price_batch(req: BatchPriceRequest):
+    """
+    Calcul prix BATCH pour plusieurs types de véhicules en un seul appel.
+
+    Utilisé par l'app passagère pour afficher tous les prix (Economy, Comfort,
+    First Class, Van, Mini Bus) en un seul round-trip.
+
+    Optimisation : OSRM, météo, geo-lookup et flags sont exécutés UNE FOIS.
+    Seul le calcul de surge + prix final est itéré par car_type.
+
+    Retour :
+    {
+      "common": {
+        "distance_km": 66.72,
+        "duration_min": 62,
+        "zone_type": "capitale",
+        "booking_dt": "...",
+        "weather": { ... },
+        "time_flags": { ... },
+        ...
+      },
+      "prices": [
+        { "car_type": "economy", "final_price": 150.0, "surge_multiplier": 3.07, ... },
+        { "car_type": "comfort", "final_price": 205.0, "surge_multiplier": 3.07, ... },
+        ...
+      ]
+    }
+    """
+    try:
+        booking_dt = (
+            datetime.fromisoformat(req.booking_dt)
+            if req.booking_dt else datetime.now()
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"booking_dt invalide : '{req.booking_dt}'"
+        )
+
+    try:
+        result = calculate_trip_prices_batch(
+            lat_origin = req.lat_origin,
+            lon_origin = req.lon_origin,
+            lat_dest   = req.lat_dest,
+            lon_dest   = req.lon_dest,
+            car_types  = req.car_types,
+            booking_dt = booking_dt,
+            use_ml     = True,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    # Normalise la réponse (math.ceil des durées)
+    common = result["common"]
+    common["duration_min"] = math.ceil(common["duration_min"])
+
+    return result

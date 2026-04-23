@@ -537,6 +537,195 @@ def calculate_trip_price(
 
 
 # ══════════════════════════════════════════════════════════════════
+# PIPELINE BATCH — plusieurs car_types en un seul appel
+# ══════════════════════════════════════════════════════════════════
+
+def calculate_trip_prices_batch(
+    lat_origin:        float,
+    lon_origin:        float,
+    lat_dest:          float,
+    lon_dest:          float,
+    car_types:         list[str],
+    zone_type:         str   = "intérieure",
+    has_beach:         int   = 0,
+    population:        int   = 300_000,
+    intensite_ville:   int   = 3,
+    trafic_niveau:     int   = 1,
+    demande:           str   = "normal",
+    indice_congestion: int   = 30,
+    retard_estime_min: int   = 5,
+    vitesse_moy_kmh:   float = 40.0,
+    chauffeurs_actifs: int   = 30,
+    booking_dt:        datetime | None = None,
+    use_ml:            bool  = True,
+) -> dict:
+    """
+    Calcule le prix pour PLUSIEURS types de véhicules en un seul appel.
+
+    Optimisation : les étapes coûteuses (OSRM, météo, geo-lookup, flags)
+    sont exécutées UNE FOIS. Seul le calcul du surge + prix final
+    est itéré par car_type.
+
+    Retour :
+    {
+      "common": { distance_km, duration_min, weather, time_flags, geo_*, ... },
+      "prices": [ { car_type, final_price, surge_multiplier, ... }, ... ]
+    }
+    """
+    if booking_dt is None:
+        booking_dt = datetime.now()
+
+    # Normalisation des car_types
+    normalized_types = [CarType.normalize(ct) for ct in car_types]
+    if not normalized_types:
+        raise ValueError("car_types ne peut pas être vide")
+
+    _sep("MOVIROO — Calcul prix BATCH (multi-véhicules)")
+    print(f"  Véhicules : {', '.join(CarType.LABELS.get(ct, ct) for ct in normalized_types)}")
+
+    # ── 1. Distance & Durée (1 seul appel OSRM) ───────────────────
+    _step(1, "Distance OSRM")
+    distance_km, duration_min = get_osrm_distance(
+        lat_origin, lon_origin, lat_dest, lon_dest
+    )
+    print(f"     {distance_km:.2f} km  |  {duration_min:.1f} min")
+
+    # ── 2. Geo Lookup (1 seule fois) ──────────────────────────────
+    _step(2, "Geo Lookup — dataset")
+    lookup = _get_lookup()
+    geo_meta_origin = geo_meta_dest = None
+
+    if lookup and lookup.loaded:
+        geo_meta_origin = lookup.find_nearest(lat_origin, lon_origin)
+        geo_meta_dest   = lookup.find_nearest(lat_dest,   lon_dest)
+
+    geo_meta = geo_meta_origin or geo_meta_dest
+    if geo_meta:
+        zone_type       = geo_meta.get("zone_type",       zone_type)
+        has_beach       = int(geo_meta.get("has_beach",   has_beach))
+        population      = int(geo_meta.get("population",  population))
+        intensite_ville = int(geo_meta.get("intensite_ville", intensite_ville))
+        print(f"     ✅ {geo_meta.get('ville','?')} / {zone_type} | beach={has_beach}")
+    else:
+        print("     ℹ️  Hors dataset — valeurs fournies conservées")
+
+    if geo_meta_dest and geo_meta_dest != geo_meta_origin:
+        print(f"     ✅ Dest : {geo_meta_dest.get('ville','?')} / {geo_meta_dest.get('zone_type','?')}")
+
+    # ── 3. Météo (1 seul appel Open-Meteo) ────────────────────────
+    _step(3, "Météo Open-Meteo")
+    weather = fetch_weather(lat_origin, lon_origin, booking_dt)
+    est = " [ESTIMÉE]" if weather.get("weather_estimated") else ""
+    print(
+        f"     {weather['weather_label'].capitalize()}{est} | "
+        f"{weather['temperature_2m']}°C | vent {weather['windspeed_10m']} km/h | "
+        f"is_night={weather['is_night']} | mult=×{weather['weather_mult']}"
+    )
+
+    # ── 4. Flags temporels (1 seule fois) ─────────────────────────
+    _step(4, "Flags temporels & culturels")
+    time_flags  = compute_time_flags(booking_dt)
+    beach_flags = compute_beach_flags(has_beach, booking_dt)
+
+    # Contexte commun
+    base_row = {
+        "zone_type":         zone_type,
+        "has_beach":         has_beach,
+        "population":        population,
+        "intensite_ville":   intensite_ville,
+        "trafic_niveau":     trafic_niveau,
+        "demande":           demande,
+        "indice_congestion": indice_congestion,
+        "retard_estime_min": retard_estime_min,
+        "vitesse_moy_kmh":   vitesse_moy_kmh,
+        "chauffeurs_actifs": chauffeurs_actifs,
+        "weather_code":      weather["weather_code"],
+        "weather_label":     weather["weather_label"],
+        "weather_mult":      weather["weather_mult"],
+        "temperature_2m":    weather["temperature_2m"],
+        "windspeed_10m":     weather["windspeed_10m"],
+        "precipitation":     weather.get("precipitation", 0.0),
+        "is_night":          weather["is_night"],
+        **time_flags,
+        **beach_flags,
+    }
+
+    # ── 5. Calcul par car_type ────────────────────────────────────
+    _step(5, f"Calcul surge + prix pour {len(normalized_types)} véhicule(s)")
+    prices: list[dict] = []
+
+    for car_type in normalized_types:
+        row = {**base_row, "car_type": car_type}
+
+        if use_ml and predictor.is_loaded:
+            try:
+                ml_result = predictor.predict(row)
+                surge     = ml_result["surge_final"]
+                result    = compute_price_ml(distance_km, duration_min, row, surge, car_type)
+                result.ml_surge_xgb  = ml_result["surge_xgb"]
+                result.ml_surge_lgbm = ml_result["surge_lgbm"]
+                result.ml_confidence = ml_result["confidence"]
+            except Exception as exc:
+                print(f"     ⚠️  {car_type} : ML erreur ({exc}) → règles métier")
+                result = compute_price_rules(distance_km, duration_min, row, car_type)
+        else:
+            result = compute_price_rules(distance_km, duration_min, row, car_type)
+
+        print(
+            f"     • {CarType.LABELS.get(car_type, car_type):<12} "
+            f"→ {int(result.final_price_rounded):>4} TND  "
+            f"(surge ×{result.surge_multiplier:.3f})"
+        )
+
+        prices.append({
+            "car_type":           car_type,
+            "car_type_label":     CarType.LABELS.get(car_type, car_type),
+            "base_fare":          result.base_fare,
+            "distance_cost":      result.distance_cost,
+            "duration_cost":      result.duration_cost,
+            "raw_price":          result.raw_price,
+            "surge_multiplier":   result.surge_multiplier,
+            "final_price":        result.final_price,
+            "final_price_rounded": result.final_price_rounded,
+            "loyalty_points":     result.loyalty_points,
+            "currency":           "TND",
+            "min_applied":        result.min_applied,
+            "mult_traffic":       result.mult_traffic,
+            "mult_weather":       result.mult_weather,
+            "mult_demand":        result.mult_demand,
+            "mult_night":         result.mult_night,
+            "mult_car":           result.mult_car,
+            "mult_friday":        result.mult_friday,
+            "mult_ramadan":       result.mult_ramadan,
+            "mult_beach":         result.mult_beach,
+            "mult_zone":          result.mult_zone,
+            "mult_special_event": result.mult_special_event,
+            "mult_season":        result.mult_season,
+            "ml_used":            result.ml_used,
+            "ml_surge_xgb":       result.ml_surge_xgb,
+            "ml_surge_lgbm":      result.ml_surge_lgbm,
+            "ml_confidence":      result.ml_confidence,
+            "source":             result.source,
+            "labels":             result.labels,
+        })
+
+    return {
+        "common": {
+            "distance_km":   distance_km,
+            "duration_min":  duration_min,
+            "zone_type":     zone_type,
+            "booking_dt":    booking_dt.isoformat(),
+            "weather":       weather,
+            "time_flags":    time_flags,
+            "beach_flags":   beach_flags,
+            "geo_origin":    geo_meta_origin,
+            "geo_dest":      geo_meta_dest,
+        },
+        "prices": prices,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════
 # AFFICHAGE RÉCAPITULATIF
 # ══════════════════════════════════════════════════════════════════
 
