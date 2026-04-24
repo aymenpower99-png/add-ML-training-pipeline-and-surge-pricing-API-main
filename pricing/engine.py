@@ -674,7 +674,8 @@ def calculate_trip_prices_batch(
         print(
             f"     • {CarType.LABELS.get(car_type, car_type):<12} "
             f"→ {int(result.final_price_rounded):>4} TND  "
-            f"(surge ×{result.surge_multiplier:.3f})"
+            f"(surge ×{result.surge_multiplier:.3f})  "
+            f"🎟️ {result.loyalty_points} pts"
         )
 
         prices.append({
