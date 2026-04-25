@@ -575,8 +575,10 @@ def calculate_trip_prices_batch(
     if booking_dt is None:
         booking_dt = datetime.now()
 
-    # Normalisation des car_types
+    # Normalisation des car_types + déduplication
     normalized_types = [CarType.normalize(ct) for ct in car_types]
+    # Déduplication pour éviter les doublons si backend envoie des noms similaires
+    normalized_types = list(dict.fromkeys(normalized_types))
     if not normalized_types:
         raise ValueError("car_types ne peut pas être vide")
 
@@ -657,6 +659,10 @@ def calculate_trip_prices_batch(
     for car_type in normalized_types:
         row = {**base_row, "car_type": car_type}
 
+        # Print full CLI report header for this car type
+        _sep("MOVIROO — Calcul prix dynamique")
+        print(f"  Véhicule : {CarType.LABELS.get(car_type, car_type)}")
+
         if use_ml and predictor.is_loaded:
             try:
                 ml_result = predictor.predict(row)
@@ -671,12 +677,50 @@ def calculate_trip_prices_batch(
         else:
             result = compute_price_rules(distance_km, duration_min, row, car_type)
 
-        print(
-            f"     • {CarType.LABELS.get(car_type, car_type):<12} "
-            f"→ {int(result.final_price_rounded):>4} TND  "
-            f"(surge ×{result.surge_multiplier:.3f})  "
-            f"🎟️ {result.loyalty_points} pts"
-        )
+        # Construct full dict for _print_result (same format as single pricing)
+        car_output = {
+            "base_fare":            result.base_fare,
+            "distance_cost":        result.distance_cost,
+            "duration_cost":        result.duration_cost,
+            "raw_price":            result.raw_price,
+            "surge_multiplier":     result.surge_multiplier,
+            "final_price":          result.final_price,
+            "final_price_rounded":  result.final_price_rounded,
+            "loyalty_points":       result.loyalty_points,
+            "currency":             "TND",
+            "min_applied":          result.min_applied,
+            "mult_traffic":         result.mult_traffic,
+            "mult_weather":         result.mult_weather,
+            "mult_demand":          result.mult_demand,
+            "mult_night":           result.mult_night,
+            "mult_car":             result.mult_car,
+            "mult_friday":          result.mult_friday,
+            "mult_ramadan":         result.mult_ramadan,
+            "mult_beach":           result.mult_beach,
+            "mult_zone":            result.mult_zone,
+            "mult_special_event":   result.mult_special_event,
+            "mult_season":          result.mult_season,
+            "ml_used":              result.ml_used,
+            "ml_surge_xgb":         result.ml_surge_xgb,
+            "ml_surge_lgbm":        result.ml_surge_lgbm,
+            "ml_confidence":        result.ml_confidence,
+            "source":               result.source,
+            "labels":               result.labels,
+            "distance_km":          distance_km,
+            "duration_min":         duration_min,
+            "car_type":             car_type,
+            "car_type_label":       CarType.LABELS.get(car_type, car_type),
+            "zone_type":            zone_type,
+            "booking_dt":           booking_dt.isoformat(),
+            "weather":              weather,
+            "time_flags":           time_flags,
+            "beach_flags":          beach_flags,
+            "geo_origin":           geo_meta_origin,
+            "geo_dest":             geo_meta_dest,
+        }
+
+        # Print full CLI report for this car type
+        _print_result(car_output)
 
         prices.append({
             "car_type":           car_type,

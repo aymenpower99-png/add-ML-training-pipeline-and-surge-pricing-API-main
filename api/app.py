@@ -91,6 +91,37 @@ def _sanitize_json_response(data: dict) -> dict:
     return clean(data)
 
 
+def _validate_trip_coordinates(
+    lat_origin: float,
+    lon_origin: float,
+    lat_dest:   float,
+    lon_dest:   float,
+) -> None:
+    """
+    Validate trip coordinates before any OSRM / pricing call.
+
+    Raises HTTPException(400) on:
+      - (0, 0) coordinates (typical fallback for missing data)
+      - Identical pickup and dropoff (zero-distance trip)
+    Out-of-range values are caught earlier by Pydantic field_validator.
+    """
+    if lat_origin == 0 and lon_origin == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Pickup coordinates (0, 0) are invalid — likely a missing/fallback value.",
+        )
+    if lat_dest == 0 and lon_dest == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Dropoff coordinates (0, 0) are invalid — likely a missing/fallback value.",
+        )
+    if lat_origin == lat_dest and lon_origin == lon_dest:
+        raise HTTPException(
+            status_code=400,
+            detail="Pickup and dropoff coordinates cannot be identical.",
+        )
+
+
 # ══════════════════════════════════════════════════════════════════
 # APP FASTAPI
 # ══════════════════════════════════════════════════════════════════
@@ -200,6 +231,28 @@ class QuickPriceRequest(BaseModel):
     car_type:   str   = Field(default="comfort", example="comfort")
     booking_dt: Optional[str] = Field(default=None)
 
+    @field_validator("lat_origin", "lat_dest")
+    @classmethod
+    def validate_lat(cls, v: float) -> float:
+        if v is None or not isinstance(v, (int, float)):
+            raise ValueError("Latitude must be a number")
+        if v != v:  # NaN check
+            raise ValueError("Latitude cannot be NaN")
+        if v < -90 or v > 90:
+            raise ValueError(f"Latitude {v} out of range (-90..90)")
+        return float(v)
+
+    @field_validator("lon_origin", "lon_dest")
+    @classmethod
+    def validate_lon(cls, v: float) -> float:
+        if v is None or not isinstance(v, (int, float)):
+            raise ValueError("Longitude must be a number")
+        if v != v:  # NaN check
+            raise ValueError("Longitude cannot be NaN")
+        if v < -180 or v > 180:
+            raise ValueError(f"Longitude {v} out of range (-180..180)")
+        return float(v)
+
 
 class BatchPriceRequest(BaseModel):
     """
@@ -218,6 +271,28 @@ class BatchPriceRequest(BaseModel):
         example=["economy", "comfort", "first_class", "van"],
     )
     booking_dt: Optional[str] = Field(default=None)
+
+    @field_validator("lat_origin", "lat_dest")
+    @classmethod
+    def validate_lat(cls, v: float) -> float:
+        if v is None or not isinstance(v, (int, float)):
+            raise ValueError("Latitude must be a number")
+        if v != v:  # NaN check
+            raise ValueError("Latitude cannot be NaN")
+        if v < -90 or v > 90:
+            raise ValueError(f"Latitude {v} out of range (-90..90)")
+        return float(v)
+
+    @field_validator("lon_origin", "lon_dest")
+    @classmethod
+    def validate_lon(cls, v: float) -> float:
+        if v is None or not isinstance(v, (int, float)):
+            raise ValueError("Longitude must be a number")
+        if v != v:  # NaN check
+            raise ValueError("Longitude cannot be NaN")
+        if v < -180 or v > 180:
+            raise ValueError(f"Longitude {v} out of range (-180..180)")
+        return float(v)
 
     @field_validator("car_types")
     @classmethod
@@ -475,6 +550,11 @@ def price_quick(req: QuickPriceRequest):
     - Météo depuis Open-Meteo
     - Heure/date : maintenant (ou booking_dt si fourni)
     """
+    # Validate coordinates BEFORE any OSRM/pricing call
+    _validate_trip_coordinates(
+        req.lat_origin, req.lon_origin, req.lat_dest, req.lon_dest
+    )
+
     try:
         raw_dt = datetime.fromisoformat(req.booking_dt) if req.booking_dt else None
         booking_dt = _normalize_datetime(raw_dt)
@@ -529,6 +609,11 @@ def price_batch(req: BatchPriceRequest):
       ]
     }
     """
+    # Validate coordinates BEFORE any OSRM/pricing call
+    _validate_trip_coordinates(
+        req.lat_origin, req.lon_origin, req.lat_dest, req.lon_dest
+    )
+
     try:
         raw_dt = datetime.fromisoformat(req.booking_dt) if req.booking_dt else None
         booking_dt = _normalize_datetime(raw_dt)

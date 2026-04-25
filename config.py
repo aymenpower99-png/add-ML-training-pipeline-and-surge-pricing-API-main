@@ -35,12 +35,29 @@ MULT_DEMAND: dict[str, float] = {
 MULT_NIGHT: float = 2.20
 
 MULT_CAR: dict[str, float] = {
-    "economy":     0.75,
-    "standard":    0.90,
-    "comfort":     1.00,
-    "first_class": 1.60,
-    "van":         1.30,
-    "mini_bus":    1.50,    
+    "economy":        0.75,
+    "budget":         0.70,
+    "compact":        0.80,
+    "standard":       0.90,
+    "comfort":        1.00,
+    "premium":        1.20,
+    "business":       1.35,
+    "suv":            1.25,
+    "crossover":      1.15,
+    "van":            1.30,
+    "minivan":        1.35,
+    "mini_bus":       1.50,
+    "luxury":         1.70,
+    "vip":            1.85,
+    "first_class":    1.60,
+    "electric":       1.10,
+    "hybrid":         1.05,
+    "sports":         1.80,
+    "convertible":    1.75,
+    "off_road_4x4":   1.40,
+    "pickup":         1.30,
+    "cargo_van":      1.45,
+    "shared":         0.60
 }
 
 MULT_FRIDAY_JUMUAH: float = 1.40
@@ -148,11 +165,27 @@ DEMAND_MAP: dict[str, int] = {
 
 CAR_MAP: dict[str, int] = {
     "economy":     1,
-    "standard":    2,
-    "comfort":     3,
-    "van":         4,
-    "mini_bus":    5,
-    "first_class": 6,
+    "budget":      2,
+    "compact":     3,
+    "standard":    4,
+    "comfort":     5,
+    "premium":     6,
+    "business":    7,
+    "suv":          8,
+    "crossover":   9,
+    "van":         10,
+    "mini_bus":    11,
+    "first_class": 12,
+    "luxury":      13,
+    "vip":         14,
+    "electric":    15,
+    "hybrid":      16,
+    "sports":      17,
+    "convertible": 18,
+    "off_road_4x4": 19,
+    "pickup":      20,
+    "cargo_van":   21,
+    "shared":      22,
 }
 
 PERIODE_MAP: dict[str, int] = {
