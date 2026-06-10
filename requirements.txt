@@ -1,29 +1,37 @@
-# Core
+# ── Core ──
 numpy
 pandas
 
-# Machine Learning
+# ── Machine Learning ──
 scikit-learn
 xgboost
 lightgbm
 joblib
 
-# API + requests
+# ── API (Pricing API — FastAPI) ──
+fastapi
+uvicorn[standard]
+pydantic
+
+# ── Config API (Flask) ──
+flask
+flask-cors
+gunicorn
+
+# ── Database ──
+psycopg2-binary
+python-dotenv
+
+# ── Data / HTTP ──
 requests
 requests-cache
 retry-requests
-
-# Data processing
 python-dateutil
 
-# Optional (visualisation/debug)
+# ── Utils ──
+tqdm
+
+# ── Optional (viz/debug) ──
 matplotlib
 seaborn
-
-# Fast API
-tqdm
-fastapi
-uvicorn[standard]
-
-# Pydantic
-pydantic
+openmeteo-requests
