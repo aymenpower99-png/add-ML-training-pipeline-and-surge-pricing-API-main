@@ -118,18 +118,19 @@ class ConfigDB:
         self._init_db()
 
     # ── Connexion ─────────────────────────────────────────────────────────────
-   @contextmanager
-def _connect(self):
-    con = psycopg2.connect(self._dsn)
-    con.autocommit = False
-    try:
-        yield con
-        con.commit()
-    except Exception:
-        con.rollback()
-        raise
-    finally:
-        con.close()
+  # ── Connexion ─────────────────────────────────────────────────────────────
+    @contextmanager
+    def _connect(self):
+        con = psycopg2.connect(self._dsn)
+        con.autocommit = False
+        try:
+            yield con
+            con.commit()
+        except Exception:
+            con.rollback()
+            raise
+        finally:
+            con.close()
 
     def _cursor(self, con):
         """Curseur retournant des dicts (équivalent de row_factory de sqlite3)."""
