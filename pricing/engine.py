@@ -14,6 +14,9 @@ from config import (
     MULT_TRAFFIC, MULT_WEATHER, MULT_DEMAND, MULT_NIGHT,
     MULT_CAR, MULT_FRIDAY_JUMUAH, MULT_RAMADAN, MULT_BEACH, MULT_ZONE,
     MULT_SPECIAL_EVENT,
+    ENABLE_TRAFFIC, ENABLE_WEATHER, ENABLE_DEMAND, ENABLE_NIGHT,
+    ENABLE_FRIDAY_JUMUAH, ENABLE_RAMADAN, ENABLE_BEACH, ENABLE_ZONE,
+    ENABLE_SPECIAL_EVENT, ENABLE_SEASON,
 )
 from utils.routing    import get_osrm_distance
 from utils.weather    import fetch_weather
@@ -137,60 +140,73 @@ def _resolve_multipliers(row: dict, car_type: str) -> dict:
     Extrait chaque multiplicateur depuis `row` + config.py.
     Source unique de vérité — utilisée par les deux fonctions
     compute_price_rules ET compute_price_ml.
+    Les ENABLE_* flags permettent de désactiver un facteur (mult = 1.0).
     """
     # Trafic
-    m_traffic = MULT_TRAFFIC.get(int(row.get("trafic_niveau", 1)), 1.0)
+    m_traffic = (MULT_TRAFFIC.get(int(row.get("trafic_niveau", 1)), 1.0)
+                 if ENABLE_TRAFFIC else 1.0)
 
     # Météo — on préfère weather_mult (déjà calculé par fetch_weather)
     # car il intègre la détection sirocco et la conversion WMO.
-    m_weather = float(
+    m_weather = (float(
         row.get("weather_mult")
         or MULT_WEATHER.get(int(row.get("weather_code", 1)), 1.0)
-    )
+    ) if ENABLE_WEATHER else 1.0)
 
     # Demande app
-    m_demand = MULT_DEMAND.get(str(row.get("demande", "normal")).lower(), 1.0)
+    m_demand = (MULT_DEMAND.get(str(row.get("demande", "normal")).lower(), 1.0)
+                if ENABLE_DEMAND else 1.0)
 
     # Nuit (MULT_NIGHT = 2.20 selon config)
-    m_night = MULT_NIGHT if row.get("is_night") else 1.0
+    m_night = (MULT_NIGHT if row.get("is_night") else 1.0) if ENABLE_NIGHT else 1.0
 
-    # Véhicule
-    m_car = MULT_CAR.get(CarType.normalize(car_type), 1.0)
+    # Véhicule — database-driven multiplier overrides static MULT_CAR
+    car_override = row.get("car_multiplier")
+    if car_override is not None:
+        m_car = float(car_override)
+    else:
+        m_car = MULT_CAR.get(CarType.normalize(car_type), 1.0)
 
     # Vendredi Jumu'ah
-    m_friday = MULT_FRIDAY_JUMUAH if row.get("is_friday_slot") else 1.0
+    m_friday = ((MULT_FRIDAY_JUMUAH if row.get("is_friday_slot") else 1.0)
+                if ENABLE_FRIDAY_JUMUAH else 1.0)
 
     # Zone géographique
-    m_zone = MULT_ZONE.get(str(row.get("zone_type", "intérieure")).lower(), 1.0)
+    m_zone = (MULT_ZONE.get(str(row.get("zone_type", "intérieure")).lower(), 1.0)
+              if ENABLE_ZONE else 1.0)
 
     # Ramadan / fin Ramadan
     ram_key = "none"
-    if row.get("is_aid_el_fitr"):
-        ram_key = "none"                   # Aïd el-Fitr géré par special_event
-    elif row.get("is_ramadan_slot"):
-        p = str(row.get("periode", "")).lower()
-        if   "iftar"  in p: ram_key = "ramadan_iftar"
-        elif "taraw"  in p: ram_key = "ramadan_tarawih"
-        elif "suhoor" in p: ram_key = "ramadan_suhoor"
-        else:               ram_key = "ramadan_iftar"
-    elif row.get("is_ramadan_last_week"):
-        ram_key = "ramadan_last_week"
-    m_ramadan = MULT_RAMADAN.get(ram_key, 1.0)
+    if ENABLE_RAMADAN:
+        if row.get("is_aid_el_fitr"):
+            ram_key = "none"                   # Aïd el-Fitr géré par special_event
+        elif row.get("is_ramadan_slot"):
+            p = str(row.get("periode", "")).lower()
+            if   "iftar"  in p: ram_key = "ramadan_iftar"
+            elif "taraw"  in p: ram_key = "ramadan_tarawih"
+            elif "suhoor" in p: ram_key = "ramadan_suhoor"
+            else:               ram_key = "ramadan_iftar"
+        elif row.get("is_ramadan_last_week"):
+            ram_key = "ramadan_last_week"
+    m_ramadan = MULT_RAMADAN.get(ram_key, 1.0) if ENABLE_RAMADAN else 1.0
 
     # Beach surge
-    beach_key = (
-        str(row.get("beach_peak_reason", "none"))
-        if row.get("is_beach_hour") else "none"
-    )
-    m_beach = MULT_BEACH.get(beach_key, 1.0)
+    beach_key = "none"
+    if ENABLE_BEACH:
+        beach_key = (
+            str(row.get("beach_peak_reason", "none"))
+            if row.get("is_beach_hour") else "none"
+        )
+    m_beach = MULT_BEACH.get(beach_key, 1.0) if ENABLE_BEACH else 1.0
 
     # Événement spécial (Aïd el-Fitr, Aïd el-Adha, Nouvel An)
-    special = str(row.get("special_event", "none")).lower()
-    m_special = MULT_SPECIAL_EVENT.get(special, 1.0)
+    special = (str(row.get("special_event", "none")).lower()
+               if ENABLE_SPECIAL_EVENT else "none")
+    m_special = MULT_SPECIAL_EVENT.get(special, 1.0) if ENABLE_SPECIAL_EVENT else 1.0
 
     # Saison
     season = str(row.get("season", "été")).lower()
-    m_season = _SEASON_SURGE.get(season, 1.0)
+    m_season = _SEASON_SURGE.get(season, 1.0) if ENABLE_SEASON else 1.0
 
     return {
         "m_traffic":  m_traffic,
@@ -375,6 +391,7 @@ def calculate_trip_price(
     vitesse_moy_kmh:   float = 40.0,
     chauffeurs_actifs: int   = 30,
     car_type:          str   = CarType.COMFORT,
+    car_multiplier:    float | None = None,
     booking_dt:        datetime | None = None,
     use_ml:            bool  = True,
     dataset_csv:       str   = "",
@@ -385,6 +402,7 @@ def calculate_trip_price(
     car_type = CarType.normalize(car_type)
     _sep("MOVIROO — Calcul prix dynamique")
     print(f"  Véhicule : {CarType.LABELS.get(car_type, car_type)}")
+    print(f"  Date/Heure : {booking_dt.strftime('%Y-%m-%d %H:%M')}")
 
     # ── 1. Distance & Durée ───────────────────────────────────────
     _step(1, "Distance OSRM")
@@ -430,14 +448,15 @@ def calculate_trip_price(
     time_flags  = compute_time_flags(booking_dt)
     beach_flags = compute_beach_flags(has_beach, booking_dt)
 
+    print(f"     Heure : {booking_dt.hour}h — {time_flags['periode']}")
+    print(f"     Date  : {booking_dt.strftime('%Y-%m-%d')}")
     se = time_flags.get("special_event", "none")
-    print(f"     Période : {time_flags['periode']}  |  Saison : {time_flags['season']}")
     if se != "none":
-        print(f"     🎉 Événement : {se}  (×{MULT_SPECIAL_EVENT.get(se,1.0)})")
+      print(f"     🎉 Événement : {se}  (×{MULT_SPECIAL_EVENT.get(se,1.0)})")
     if time_flags.get("is_ramadan_last_week"):
-        print(f"     🌙 Fin Ramadan (×{MULT_RAMADAN['ramadan_last_week']})")
+      print(f"     🌙 Fin Ramadan (×{MULT_RAMADAN['ramadan_last_week']})")
     if beach_flags["is_beach_hour"]:
-        print(f"     🏖️  Beach ×{beach_flags['beach_surge_value']} ({beach_flags['beach_peak_reason']})")
+      print(f"     🏖️  Beach ×{beach_flags['beach_surge_value']} ({beach_flags['beach_peak_reason']})")
 
     # ── Assemblage du contexte row ────────────────────────────────
     row = {
@@ -452,6 +471,7 @@ def calculate_trip_price(
         "vitesse_moy_kmh":   vitesse_moy_kmh,
         "chauffeurs_actifs": chauffeurs_actifs,
         "car_type":          car_type,
+        "car_multiplier":    car_multiplier,
         # Météo — clé weather_mult transmise pour usage direct
         "weather_code":      weather["weather_code"],
         "weather_label":     weather["weather_label"],
@@ -546,6 +566,7 @@ def calculate_trip_prices_batch(
     lat_dest:          float,
     lon_dest:          float,
     car_types:         list[str],
+    car_multipliers:   dict[str, float] | None = None,
     zone_type:         str   = "intérieure",
     has_beach:         int   = 0,
     population:        int   = 300_000,
@@ -583,6 +604,7 @@ def calculate_trip_prices_batch(
         raise ValueError("car_types ne peut pas être vide")
 
     _sep("MOVIROO — Calcul prix BATCH (multi-véhicules)")
+    print(f"  Date/Heure : {booking_dt.strftime('%Y-%m-%d %H:%M')}")
     print(f"  Véhicules : {', '.join(CarType.LABELS.get(ct, ct) for ct in normalized_types)}")
 
     # ── 1. Distance & Durée (1 seul appel OSRM) ───────────────────
@@ -629,7 +651,15 @@ def calculate_trip_prices_batch(
     time_flags  = compute_time_flags(booking_dt)
     beach_flags = compute_beach_flags(has_beach, booking_dt)
 
-    # Contexte commun
+    print(f"     Heure : {booking_dt.hour}h — {time_flags['periode']}")
+    print(f"     Date  : {booking_dt.strftime('%Y-%m-%d')}")
+    se = time_flags.get("special_event", "none")
+    if se != "none":
+      print(f"     🎉 Événement : {se}  (×{MULT_SPECIAL_EVENT.get(se,1.0)})")
+    if time_flags.get("is_ramadan_last_week"):
+      print(f"     🌙 Fin Ramadan (×{MULT_RAMADAN['ramadan_last_week']})")
+    if beach_flags["is_beach_hour"]:
+      print(f"     🏖️  Beach ×{beach_flags['beach_surge_value']} ({beach_flags['beach_peak_reason']})")
     base_row = {
         "zone_type":         zone_type,
         "has_beach":         has_beach,
@@ -658,6 +688,11 @@ def calculate_trip_prices_batch(
 
     for car_type in normalized_types:
         row = {**base_row, "car_type": car_type}
+        # Inject database-driven multiplier if provided
+        if car_multipliers:
+            mult = car_multipliers.get(car_type)
+            if mult is not None:
+                row["car_multiplier"] = mult
 
         # Print full CLI report header for this car type
         _sep("MOVIROO — Calcul prix dynamique")

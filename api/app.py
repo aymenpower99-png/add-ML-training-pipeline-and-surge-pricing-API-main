@@ -175,6 +175,13 @@ class PriceEstimateRequest(BaseModel):
         example="comfort",
     )
 
+    # Multiplicateur de véhicule (optionnel — provient de la base de données)
+    car_multiplier: Optional[float] = Field(
+        default=None,
+        description="Multiplicateur de prix pour ce type de véhicule (DB-driven). Si absent, utilise MULT_CAR du config.",
+        example=1.2,
+    )
+
     # Date/heure de réservation (ISO 8601 — None = maintenant)
     booking_dt: Optional[str] = Field(
         default=None,
@@ -229,6 +236,10 @@ class QuickPriceRequest(BaseModel):
     lat_dest:   float = Field(..., example=35.8256)
     lon_dest:   float = Field(..., example=10.6370)
     car_type:   str   = Field(default="comfort", example="comfort")
+    car_multiplier: Optional[float] = Field(
+        default=None,
+        description="Multiplicateur DB-driven pour ce véhicule",
+    )
     booking_dt: Optional[str] = Field(default=None)
 
     @field_validator("lat_origin", "lat_dest")
@@ -269,6 +280,10 @@ class BatchPriceRequest(BaseModel):
         default=["economy", "standard", "comfort", "first_class", "van", "mini_bus"],
         description="Liste des types de véhicules à calculer",
         example=["economy", "comfort", "first_class", "van"],
+    )
+    car_multipliers: Optional[dict[str, float]] = Field(
+        default=None,
+        description="Map car_type → multiplier (DB-driven). Ex: {'economy': 0.75, 'comfort': 1.0}",
     )
     booking_dt: Optional[str] = Field(default=None)
 
@@ -532,6 +547,7 @@ def price_estimate(req: PriceEstimateRequest):
             vitesse_moy_kmh   = req.vitesse_moy_kmh,
             chauffeurs_actifs = req.chauffeurs_actifs,
             car_type          = req.car_type,
+            car_multiplier    = req.car_multiplier,
             booking_dt        = booking_dt,
             use_ml            = req.use_ml,
         )
@@ -571,6 +587,7 @@ def price_quick(req: QuickPriceRequest):
             lat_dest   = req.lat_dest,
             lon_dest   = req.lon_dest,
             car_type   = req.car_type,
+            car_multiplier = req.car_multiplier,
             booking_dt = booking_dt,
             use_ml     = True,
         )
@@ -630,6 +647,7 @@ def price_batch(req: BatchPriceRequest):
             lat_dest   = req.lat_dest,
             lon_dest   = req.lon_dest,
             car_types  = req.car_types,
+            car_multipliers = req.car_multipliers,
             booking_dt = booking_dt,
             use_ml     = True,
         )
