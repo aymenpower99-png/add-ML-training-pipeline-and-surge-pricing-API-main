@@ -27,9 +27,11 @@ load_dotenv()
 
 # ── Connexion PostgreSQL ──────────────────────────────────────────────────────
 def _dsn() -> str:
-    # Use DATABASE_URL if available (Railway), else fall back to individual vars
-    if os.environ.get('DATABASE_URL'):
-        return os.environ['DATABASE_URL']
+    db_url = os.environ.get('DATABASE_URL', '')
+    if db_url.startswith('postgres://') or db_url.startswith('postgresql://'):
+        # psycopg2 needs postgres:// not postgresql://
+        return db_url.replace('postgresql://', 'postgres://', 1)
+    # fallback to individual vars
     return (
         f"host={os.environ['DB_HOST']} "
         f"port={os.environ.get('DB_PORT', 5432)} "
@@ -118,16 +120,16 @@ class ConfigDB:
     # ── Connexion ─────────────────────────────────────────────────────────────
     @contextmanager
     def _connect(self):
-        con = psycopg2.connect(self._dsn)
-        con.autocommit = False
-        try:
-            yield con
-            con.commit()
-        except Exception:
-            con.rollback()
-            raise
-        finally:
-            con.close()
+    con = psycopg2.connect(self._dsn, sslmode='require')
+    con.autocommit = False
+    try:
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
     def _cursor(self, con):
         """Curseur retournant des dicts (équivalent de row_factory de sqlite3)."""
