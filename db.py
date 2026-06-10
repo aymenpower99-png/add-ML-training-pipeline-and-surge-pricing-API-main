@@ -27,6 +27,9 @@ load_dotenv()
 
 # ── Connexion PostgreSQL ──────────────────────────────────────────────────────
 def _dsn() -> str:
+    # Use DATABASE_URL if available (Railway), else fall back to individual vars
+    if os.environ.get('DATABASE_URL'):
+        return os.environ['DATABASE_URL']
     return (
         f"host={os.environ['DB_HOST']} "
         f"port={os.environ.get('DB_PORT', 5432)} "
