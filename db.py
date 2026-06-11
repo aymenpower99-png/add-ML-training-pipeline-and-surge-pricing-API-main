@@ -118,7 +118,6 @@ class ConfigDB:
         self._init_db()
 
     # ── Connexion ─────────────────────────────────────────────────────────────
-  # ── Connexion ─────────────────────────────────────────────────────────────
     @contextmanager
     def _connect(self):
         con = psycopg2.connect(self._dsn)
