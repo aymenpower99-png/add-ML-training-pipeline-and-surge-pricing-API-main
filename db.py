@@ -28,17 +28,9 @@ load_dotenv()
 # ── Connexion PostgreSQL ──────────────────────────────────────────────────────
 def _dsn() -> str:
     db_url = os.environ.get('DATABASE_URL', '')
-    if db_url.startswith('postgres://') or db_url.startswith('postgresql://'):
-        # psycopg2 needs postgres:// not postgresql://
-        return db_url.replace('postgresql://', 'postgres://', 1)
-    # fallback to individual vars
-    return (
-        f"host={os.environ['DB_HOST']} "
-        f"port={os.environ.get('DB_PORT', 5432)} "
-        f"dbname={os.environ['DB_NAME']} "
-        f"user={os.environ['DB_USER']} "
-        f"password={os.environ['DB_PASSWORD']}"
-    )
+    if not db_url:
+        raise RuntimeError('DATABASE_URL is not set')
+    return db_url.replace('postgresql://', 'postgres://', 1)
 
 
 # ── Valeurs par défaut (source unique de vérité) ──────────────────────────────
