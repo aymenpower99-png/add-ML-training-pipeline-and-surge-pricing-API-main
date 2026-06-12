@@ -33,7 +33,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Instance unique de la DB (thread-safe via WAL + contextmanager)
-# _db = ConfigDB()
+_db = ConfigDB()
 
 
 # ─── Sérialisation JSON-safe ──────────────────────────────────────────────────
@@ -52,7 +52,11 @@ def _jsonify_cfg(cfg: dict):
 @app.get("/api/health")
 def health():
     """Vérifie que la DB répond."""
-    return jsonify({"status": "ok"})
+    try:
+        cfg = _db.load()
+        return jsonify({"status": "ok", "keys_loaded": len(cfg)})
+    except Exception as e:
+        return jsonify({"status": "error", "detail": str(e)}), 500
 
 
 @app.get("/api/config")
