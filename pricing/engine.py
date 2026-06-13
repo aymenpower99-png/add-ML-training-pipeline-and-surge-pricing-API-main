@@ -9,15 +9,19 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config import (
-    BASE_FARE, RATE_PER_KM, RATE_PER_MIN, MIN_FARE,
-    MULT_TRAFFIC, MULT_WEATHER, MULT_DEMAND, MULT_NIGHT,
-    MULT_CAR, MULT_FRIDAY_JUMUAH, MULT_RAMADAN, MULT_BEACH, MULT_ZONE,
-    MULT_SPECIAL_EVENT,
-    ENABLE_TRAFFIC, ENABLE_WEATHER, ENABLE_DEMAND, ENABLE_NIGHT,
-    ENABLE_FRIDAY_JUMUAH, ENABLE_RAMADAN, ENABLE_BEACH, ENABLE_ZONE,
-    ENABLE_SPECIAL_EVENT, ENABLE_SEASON,
-)
+from config_client import get_config
+
+# ── Dynamic config wrapper ───────────────────────────────────────────────────
+# The Pricing API now reads config from the Config API (cached) instead of
+# the static config.py file.  If the Config API is unreachable, the values
+# fall back to the static config.py automatically.
+
+def _cfg():
+    """Shorthand: return the current (cached) config dict."""
+    return get_config()
+
+# Keep the static import as an absolute fallback for import-time safety
+import config as _static_cfg
 from utils.routing    import get_osrm_distance
 from utils.weather    import fetch_weather
 from utils.flags      import compute_time_flags, compute_beach_flags
@@ -142,42 +146,44 @@ def _resolve_multipliers(row: dict, car_type: str) -> dict:
     compute_price_rules ET compute_price_ml.
     Les ENABLE_* flags permettent de désactiver un facteur (mult = 1.0).
     """
+    cfg = _cfg()
+
     # Trafic
-    m_traffic = (MULT_TRAFFIC.get(int(row.get("trafic_niveau", 1)), 1.0)
-                 if ENABLE_TRAFFIC else 1.0)
+    m_traffic = (cfg.get("MULT_TRAFFIC", _static_cfg.MULT_TRAFFIC).get(int(row.get("trafic_niveau", 1)), 1.0)
+                 if cfg.get("ENABLE_TRAFFIC", _static_cfg.ENABLE_TRAFFIC) else 1.0)
 
     # Météo — on préfère weather_mult (déjà calculé par fetch_weather)
     # car il intègre la détection sirocco et la conversion WMO.
     m_weather = (float(
         row.get("weather_mult")
-        or MULT_WEATHER.get(int(row.get("weather_code", 1)), 1.0)
-    ) if ENABLE_WEATHER else 1.0)
+        or cfg.get("MULT_WEATHER", _static_cfg.MULT_WEATHER).get(int(row.get("weather_code", 1)), 1.0)
+    ) if cfg.get("ENABLE_WEATHER", _static_cfg.ENABLE_WEATHER) else 1.0)
 
     # Demande app
-    m_demand = (MULT_DEMAND.get(str(row.get("demande", "normal")).lower(), 1.0)
-                if ENABLE_DEMAND else 1.0)
+    m_demand = (cfg.get("MULT_DEMAND", _static_cfg.MULT_DEMAND).get(str(row.get("demande", "normal")).lower(), 1.0)
+                if cfg.get("ENABLE_DEMAND", _static_cfg.ENABLE_DEMAND) else 1.0)
 
-    # Nuit (MULT_NIGHT = 2.20 selon config)
-    m_night = (MULT_NIGHT if row.get("is_night") else 1.0) if ENABLE_NIGHT else 1.0
+    # Nuit
+    m_night = (cfg.get("MULT_NIGHT", _static_cfg.MULT_NIGHT) if row.get("is_night") else 1.0) if cfg.get("ENABLE_NIGHT", _static_cfg.ENABLE_NIGHT) else 1.0
 
     # Véhicule — database-driven multiplier overrides static MULT_CAR
     car_override = row.get("car_multiplier")
     if car_override is not None:
         m_car = float(car_override)
     else:
-        m_car = MULT_CAR.get(CarType.normalize(car_type), 1.0)
+        m_car = cfg.get("MULT_CAR", _static_cfg.MULT_CAR).get(CarType.normalize(car_type), 1.0)
 
     # Vendredi Jumu'ah
-    m_friday = ((MULT_FRIDAY_JUMUAH if row.get("is_friday_slot") else 1.0)
-                if ENABLE_FRIDAY_JUMUAH else 1.0)
+    m_friday = ((cfg.get("MULT_FRIDAY_JUMUAH", _static_cfg.MULT_FRIDAY_JUMUAH) if row.get("is_friday_slot") else 1.0)
+                if cfg.get("ENABLE_FRIDAY_JUMUAH", _static_cfg.ENABLE_FRIDAY_JUMUAH) else 1.0)
 
     # Zone géographique
-    m_zone = (MULT_ZONE.get(str(row.get("zone_type", "intérieure")).lower(), 1.0)
-              if ENABLE_ZONE else 1.0)
+    m_zone = (cfg.get("MULT_ZONE", _static_cfg.MULT_ZONE).get(str(row.get("zone_type", "intérieure")).lower(), 1.0)
+              if cfg.get("ENABLE_ZONE", _static_cfg.ENABLE_ZONE) else 1.0)
 
     # Ramadan / fin Ramadan
     ram_key = "none"
-    if ENABLE_RAMADAN:
+    if cfg.get("ENABLE_RAMADAN", _static_cfg.ENABLE_RAMADAN):
         if row.get("is_aid_el_fitr"):
             ram_key = "none"                   # Aïd el-Fitr géré par special_event
         elif row.get("is_ramadan_slot"):
@@ -188,25 +194,25 @@ def _resolve_multipliers(row: dict, car_type: str) -> dict:
             else:               ram_key = "ramadan_iftar"
         elif row.get("is_ramadan_last_week"):
             ram_key = "ramadan_last_week"
-    m_ramadan = MULT_RAMADAN.get(ram_key, 1.0) if ENABLE_RAMADAN else 1.0
+    m_ramadan = cfg.get("MULT_RAMADAN", _static_cfg.MULT_RAMADAN).get(ram_key, 1.0) if cfg.get("ENABLE_RAMADAN", _static_cfg.ENABLE_RAMADAN) else 1.0
 
     # Beach surge
     beach_key = "none"
-    if ENABLE_BEACH:
+    if cfg.get("ENABLE_BEACH", _static_cfg.ENABLE_BEACH):
         beach_key = (
             str(row.get("beach_peak_reason", "none"))
             if row.get("is_beach_hour") else "none"
         )
-    m_beach = MULT_BEACH.get(beach_key, 1.0) if ENABLE_BEACH else 1.0
+    m_beach = cfg.get("MULT_BEACH", _static_cfg.MULT_BEACH).get(beach_key, 1.0) if cfg.get("ENABLE_BEACH", _static_cfg.ENABLE_BEACH) else 1.0
 
     # Événement spécial (Aïd el-Fitr, Aïd el-Adha, Nouvel An)
     special = (str(row.get("special_event", "none")).lower()
-               if ENABLE_SPECIAL_EVENT else "none")
-    m_special = MULT_SPECIAL_EVENT.get(special, 1.0) if ENABLE_SPECIAL_EVENT else 1.0
+               if cfg.get("ENABLE_SPECIAL_EVENT", _static_cfg.ENABLE_SPECIAL_EVENT) else "none")
+    m_special = cfg.get("MULT_SPECIAL_EVENT", _static_cfg.MULT_SPECIAL_EVENT).get(special, 1.0) if cfg.get("ENABLE_SPECIAL_EVENT", _static_cfg.ENABLE_SPECIAL_EVENT) else 1.0
 
     # Saison
     season = str(row.get("season", "été")).lower()
-    m_season = _SEASON_SURGE.get(season, 1.0) if ENABLE_SEASON else 1.0
+    m_season = _SEASON_SURGE.get(season, 1.0) if cfg.get("ENABLE_SEASON", _static_cfg.ENABLE_SEASON) else 1.0
 
     return {
         "m_traffic":  m_traffic,
@@ -244,12 +250,15 @@ def _build_labels(row: dict, m: dict) -> dict:
     }
 
 
-def _finalize(raw: float, surge: float) -> tuple[float, float, int, bool]:
+def _finalize(raw: float, surge: float, min_fare: float | None = None) -> tuple[float, float, int, bool]:
     """Prix final → arrondi 5 TND → points fidélité."""
+    cfg = _cfg()
+    if min_fare is None:
+        min_fare = cfg.get("MIN_FARE", _static_cfg.MIN_FARE)
     final = round(raw * surge, 2)
     min_applied = False
-    if final < MIN_FARE:
-        final, min_applied = MIN_FARE, True
+    if final < min_fare:
+        final, min_applied = min_fare, True
     rounded = int(math.ceil(final / 5) * 5)
     loyalty = int(math.ceil(rounded * 0.5 / 5) * 5)
     return final, float(rounded), loyalty, min_applied
@@ -273,9 +282,15 @@ def compute_price_rules(
     car_type = CarType.normalize(car_type)
     row = {**row, "car_type": car_type}
 
-    dist_cost = round(distance_km  * RATE_PER_KM,  2)
-    dur_cost  = round(duration_min * RATE_PER_MIN,  2)
-    raw       = round(BASE_FARE + dist_cost + dur_cost, 2)
+    cfg = _cfg()
+    base_fare = cfg.get("BASE_FARE", _static_cfg.BASE_FARE)
+    rate_per_km = cfg.get("RATE_PER_KM", _static_cfg.RATE_PER_KM)
+    rate_per_min = cfg.get("RATE_PER_MIN", _static_cfg.RATE_PER_MIN)
+    min_fare = cfg.get("MIN_FARE", _static_cfg.MIN_FARE)
+
+    dist_cost = round(distance_km  * rate_per_km,  2)
+    dur_cost  = round(duration_min * rate_per_min,  2)
+    raw       = round(base_fare + dist_cost + dur_cost, 2)
 
     m = _resolve_multipliers(row, car_type)
 
@@ -287,10 +302,10 @@ def compute_price_rules(
         4,
     )
 
-    final, rounded, loyalty, min_applied = _finalize(raw, surge)
+    final, rounded, loyalty, min_applied = _finalize(raw, surge, min_fare)
 
     return PriceResult(
-        base_fare=BASE_FARE, distance_cost=dist_cost, duration_cost=dur_cost,
+        base_fare=base_fare, distance_cost=dist_cost, duration_cost=dur_cost,
         raw_price=raw, surge_multiplier=surge,
         final_price=final, final_price_rounded=rounded, loyalty_points=loyalty,
         min_applied=min_applied,
@@ -329,9 +344,15 @@ def compute_price_ml(
     car_type = CarType.normalize(car_type)
     row = {**row, "car_type": car_type}
 
-    dist_cost = round(distance_km  * RATE_PER_KM,  2)
-    dur_cost  = round(duration_min * RATE_PER_MIN,  2)
-    raw       = round(BASE_FARE + dist_cost + dur_cost, 2)
+    cfg = _cfg()
+    base_fare = cfg.get("BASE_FARE", _static_cfg.BASE_FARE)
+    rate_per_km = cfg.get("RATE_PER_KM", _static_cfg.RATE_PER_KM)
+    rate_per_min = cfg.get("RATE_PER_MIN", _static_cfg.RATE_PER_MIN)
+    min_fare = cfg.get("MIN_FARE", _static_cfg.MIN_FARE)
+
+    dist_cost = round(distance_km  * rate_per_km,  2)
+    dur_cost  = round(duration_min * rate_per_min,  2)
+    raw       = round(base_fare + dist_cost + dur_cost, 2)
 
     m = _resolve_multipliers(row, car_type)
 
@@ -344,7 +365,7 @@ def compute_price_ml(
     )
 
     surge_total = round(ml_surge * surge_rules, 4)
-    final, rounded, loyalty, min_applied = _finalize(raw, surge_total)
+    final, rounded, loyalty, min_applied = _finalize(raw, surge_total, min_fare)
 
     labels = _build_labels(row, m)
     labels["ml_raw"]    = f"surge_ML={ml_surge:.4f}"
@@ -352,7 +373,7 @@ def compute_price_ml(
     labels["ml_fusion"] = f"total=×{ml_surge:.4f} × ×{surge_rules:.4f} = ×{surge_total:.4f}"
 
     return PriceResult(
-        base_fare=BASE_FARE, distance_cost=dist_cost, duration_cost=dur_cost,
+        base_fare=base_fare, distance_cost=dist_cost, duration_cost=dur_cost,
         raw_price=raw, surge_multiplier=surge_total,
         final_price=final, final_price_rounded=rounded, loyalty_points=loyalty,
         min_applied=min_applied,
@@ -447,14 +468,15 @@ def calculate_trip_price(
     _step(4, "Flags temporels & culturels")
     time_flags  = compute_time_flags(booking_dt)
     beach_flags = compute_beach_flags(has_beach, booking_dt)
+    cfg = _cfg()
 
     print(f"     Heure : {booking_dt.hour}h — {time_flags['periode']}")
     print(f"     Date  : {booking_dt.strftime('%Y-%m-%d')}")
     se = time_flags.get("special_event", "none")
     if se != "none":
-      print(f"     🎉 Événement : {se}  (×{MULT_SPECIAL_EVENT.get(se,1.0)})")
+      print(f"     🎉 Événement : {se}  (×{cfg.get('MULT_SPECIAL_EVENT', _static_cfg.MULT_SPECIAL_EVENT).get(se,1.0)})")
     if time_flags.get("is_ramadan_last_week"):
-      print(f"     🌙 Fin Ramadan (×{MULT_RAMADAN['ramadan_last_week']})")
+      print(f"     🌙 Fin Ramadan (×{cfg.get('MULT_RAMADAN', _static_cfg.MULT_RAMADAN)['ramadan_last_week']})")
     if beach_flags["is_beach_hour"]:
       print(f"     🏖️  Beach ×{beach_flags['beach_surge_value']} ({beach_flags['beach_peak_reason']})")
 
@@ -650,14 +672,15 @@ def calculate_trip_prices_batch(
     _step(4, "Flags temporels & culturels")
     time_flags  = compute_time_flags(booking_dt)
     beach_flags = compute_beach_flags(has_beach, booking_dt)
+    cfg = _cfg()
 
     print(f"     Heure : {booking_dt.hour}h — {time_flags['periode']}")
     print(f"     Date  : {booking_dt.strftime('%Y-%m-%d')}")
     se = time_flags.get("special_event", "none")
     if se != "none":
-      print(f"     🎉 Événement : {se}  (×{MULT_SPECIAL_EVENT.get(se,1.0)})")
+      print(f"     🎉 Événement : {se}  (×{cfg.get('MULT_SPECIAL_EVENT', _static_cfg.MULT_SPECIAL_EVENT).get(se,1.0)})")
     if time_flags.get("is_ramadan_last_week"):
-      print(f"     🌙 Fin Ramadan (×{MULT_RAMADAN['ramadan_last_week']})")
+      print(f"     🌙 Fin Ramadan (×{cfg.get('MULT_RAMADAN', _static_cfg.MULT_RAMADAN)['ramadan_last_week']})")
     if beach_flags["is_beach_hour"]:
       print(f"     🏖️  Beach ×{beach_flags['beach_surge_value']} ({beach_flags['beach_peak_reason']})")
     base_row = {

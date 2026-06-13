@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 import sys
+import asyncio
 from datetime import datetime, timezone
 from typing   import Optional
 
@@ -36,7 +37,7 @@ from pydantic             import BaseModel, Field, field_validator
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config           import MULT_CAR, MULT_ZONE, MULT_SPECIAL_EVENT
+from config_client    import refresh_config, get_config, config_refresh_loop
 from models.predictor import predictor
 from pricing.engine   import (
     calculate_trip_price,
@@ -151,8 +152,13 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     print("🚀 Moviroo API démarrage...")
+    # 1. Fetch config from Config API (blocking, so first request has config)
+    refresh_config()
+    # 2. Start background config refresh loop (60s)
+    asyncio.create_task(config_refresh_loop())
+    # 3. Load ML models
     predictor.load()
-    print("✅ API prête")
+    print("✅ API prête (config + ML)")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -485,14 +491,16 @@ def health():
 def get_vehicles():
     """
     Retourne la liste des types de véhicules disponibles
-    avec leur multiplicateur de prix.
+    avec leur multiplicateur de prix (dynamique depuis Config API).
     """
+    cfg = get_config()
+    mult_car = cfg.get("MULT_CAR", {})
     return {
         "vehicles": [
             {
                 "id":           v,
                 "label":        CarType.LABELS[v],
-                "multiplier":   MULT_CAR[v],
+                "multiplier":   mult_car.get(v, 1.0),
             }
             for v in CarType.ALL
         ]
@@ -501,11 +509,13 @@ def get_vehicles():
 
 @app.get("/zones", tags=["Référentiel"])
 def get_zones():
-    """Retourne les multiplicateurs par zone géographique."""
+    """Retourne les multiplicateurs par zone géographique (dynamique depuis Config API)."""
+    cfg = get_config()
+    mult_zone = cfg.get("MULT_ZONE", {})
     return {
         "zones": [
             {"id": z, "multiplier": m}
-            for z, m in MULT_ZONE.items()
+            for z, m in mult_zone.items()
         ]
     }
 
