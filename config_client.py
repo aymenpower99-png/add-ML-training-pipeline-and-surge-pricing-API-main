@@ -55,15 +55,15 @@ _config_source: str = "fallback"
 
 def _fetch_config_from_api() -> Dict[str, Any]:
     url = f"{CONFIG_API_URL.rstrip('/')}/api/config"
-    print(f"🔄 Fetching config from: {url}", flush=True)
+    print(f"[CONFIG] Fetching config from: {url}", flush=True)
     try:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        print(f"✅ Config fetched from API ({url}) — {len(data)} keys", flush=True)
+        print(f"[CONFIG] Fetched OK — {len(data)} keys from {url}", flush=True)
         return data
     except Exception as exc:
-        print(f"❌ Config API unreachable ({url}): {exc}", flush=True)
+        print(f"[CONFIG] API unreachable ({url}): {exc}", flush=True)
         raise
 
 
@@ -83,9 +83,9 @@ def refresh_config(force: bool = False) -> Dict[str, Any]:
             _cached_config = _load_static_config()
             _config_fetched_at = now
             _config_source = "fallback"
-            print(f"⚠️ Using static config.py fallback. CONFIG_API_URL={CONFIG_API_URL}", flush=True)
+            print(f"[CONFIG] Using static fallback. CONFIG_API_URL={CONFIG_API_URL}", flush=True)
         else:
-            print(f"⚠️ Config API still unreachable — using stale cached config", flush=True)
+            print(f"[CONFIG] API still unreachable — using stale cached config", flush=True)
 
     return _cached_config
 
@@ -105,14 +105,14 @@ async def refresh_config_async() -> None:
 
 
 async def config_refresh_loop() -> None:
-    print(f"🔁 Config refresh loop started (interval={REFRESH_INTERVAL_S}s)", flush=True)
+    print(f"[CONFIG] Refresh loop started (interval={REFRESH_INTERVAL_S}s)", flush=True)
     while True:
         try:
             await refresh_config_async()
         except Exception as exc:
-            print(f"❌ Config refresh loop error: {exc}", flush=True)
+            print(f"[CONFIG] Refresh loop error: {exc}", flush=True)
         await asyncio.sleep(REFRESH_INTERVAL_S)
 
 
-print(f"🚀 config_client.py loaded — CONFIG_API_URL={CONFIG_API_URL}", flush=True)
+print(f"[STARTUP] config_client.py loaded — CONFIG_API_URL={CONFIG_API_URL}", flush=True)
 refresh_config()
