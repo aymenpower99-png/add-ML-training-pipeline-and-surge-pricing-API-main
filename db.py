@@ -349,6 +349,20 @@ def _audit(cur, table: str, key: str, old, new, by: str):
 
 # ── Schéma PostgreSQL ─────────────────────────────────────────────────────────
 _SCHEMA_SQL = """
+DO $body$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'scalar_params') THEN
+        CREATE TYPE scalar_params AS (
+            key        TEXT,
+            value_real DOUBLE PRECISION,
+            value_bool BOOLEAN,
+            value_type TEXT,
+            updated_at TEXT
+        );
+    END IF;
+END
+$body$;
+
 CREATE TABLE IF NOT EXISTS scalar_params (
     key        TEXT    PRIMARY KEY,
     value_real DOUBLE PRECISION,
